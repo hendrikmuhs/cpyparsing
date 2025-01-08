@@ -1,0 +1,81 @@
+name: Build
+
+on: [push, pull_request, release]
+
+jobs:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        arch: [ 'x86_64', 'arm64' ]
+        exclude:
+          - os: windows-latest
+            arch: arm64
+          - os: macos-13
+            arch: arm64
+          - os: macos-14
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: ${{ (runner.os == 'Linux') && (matrix.arch == 'arm64') }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Sets env for arm64
+        if: matrix.arch == 'arm64'
+        run: |
+          echo "CIBW_ARCHS_LINUX=aarch64" >> $GITHUB_ENV
+          echo "CIBW_ARCHS_MACOS=arm64" >> $GITHUB_ENV
+
+      - name: Build wheels for ${{ matrix.os }}-${{ matrix.arch }}
+        uses: pypa/cibuildwheel@v2.22.0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ matrix.arch }}-${{ strategy.job-index }}
+          path: ./wheelhouse/*.whl
+
+  make_sdist:
+    name: Make SDist
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    #   with:
+    #     fetch-depth: 0  # Optional, use if you use setuptools_scm
+    #     submodules: true  # Optional, use if you have submodules
+
+    - uses: actions/setup-python@v5
+
+    - name: Build SDist
+      run: python ./setup.py sdist
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: artifact
+        path: ./dist/*.tar.gz
+
+  upload_all:
+    needs: [build_wheels, make_sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cpyparsing
+    if: github.event_name == 'release' && github.event.action == 'published'
+
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_API_TOKEN }}
+      continue-on-error: true
